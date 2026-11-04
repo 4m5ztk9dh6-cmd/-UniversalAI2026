@@ -1,3 +1,4 @@
+
 name: Build iOS IPA
 
 on:
@@ -18,7 +19,7 @@ jobs:
         run: |
           ZIP_FILE=$(find . -maxdepth 3 -name "*.zip" | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "No source ZIP found"
+            echo "ERROR: No source ZIP found"
             exit 1
           fi
           mkdir -p extracted
@@ -26,13 +27,12 @@ jobs:
 
       - name: Locate Swift project
         run: |
-          APP_FILE=$(find extracted -name "UniversalAIAssistantApp.swift" | head -n 1)
+          APP_FILE=$(find extracted -name "UniversalAIAssistantApp.swift" -print -quit)
           if [ -z "$APP_FILE" ]; then
-            echo "Cannot find UniversalAIAssistantApp.swift"
-            find extracted -maxdepth 4 -type f
+            echo "ERROR: Cannot find UniversalAIAssistantApp.swift"
             exit 1
           fi
-          echo "PROJECT_DIR=$(dirname "$APP_FILE")" >> $GITHUB_ENV
+          echo "PROJECT_DIR=$(dirname "$APP_FILE")" >> "$GITHUB_ENV"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -51,6 +51,7 @@ jobs:
               TARGETED_DEVICE_FAMILY: "1,2"
               GENERATE_INFOPLIST_FILE: YES
               INFOPLIST_KEY_CFBundleDisplayName: "全能AI助手"
+              INFOPLIST_KEY_CFBundleExecutable: "$(EXECUTABLE_NAME)"
               INFOPLIST_KEY_NSMicrophoneUsageDescription: "用于语音输入"
               INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "用于语音识别"
           targets:
@@ -62,7 +63,9 @@ jobs:
                 - path: .
               settings:
                 base:
+                  PRODUCT_NAME: UniversalAIAssistant
                   PRODUCT_BUNDLE_IDENTIFIER: com.example.UniversalAIAssistant
+                  INFOPLIST_KEY_CFBundleExecutable: "$(EXECUTABLE_NAME)"
           EOF
           xcodegen generate
 
@@ -78,9 +81,28 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-      - name: Package IPA
+      - name: Validate and Package IPA
         run: |
           APP_PATH="$GITHUB_WORKSPACE/build/Build/Products/Release-iphoneos/UniversalAIAssistant.app"
+          PLIST="$APP_PATH/Info.plist"
+
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: App bundle not found"
+            exit 1
+          fi
+
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$PLIST" 2>/dev/null || true)
+
+          if [ -z "$EXECUTABLE" ]; then
+            EXECUTABLE="UniversalAIAssistant"
+            /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string $EXECUTABLE" "$PLIST"
+          fi
+
+          if [ ! -f "$APP_PATH/$EXECUTABLE" ]; then
+            echo "ERROR: Executable file missing: $APP_PATH/$EXECUTABLE"
+            exit 1
+          fi
+
           mkdir -p "$GITHUB_WORKSPACE/Payload"
           cp -R "$APP_PATH" "$GITHUB_WORKSPACE/Payload/"
           cd "$GITHUB_WORKSPACE"
@@ -91,3 +113,4 @@ jobs:
         with:
           name: UniversalAIAssistant-IPA
           path: UniversalAIAssistant-unsigned.ipa
+          if-no-files-found: error
