@@ -21,7 +21,10 @@ jobs:
       - name: Extract source ZIP
         run: |
           mkdir -p source
-          unzip -o "全能AI助手_iOS全屏重写版.zip" -d source
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' | grep -v 'iOS源码' | head -n 1)
+          echo "找到压缩包：$ZIP_FILE"
+          test -n "$ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d source
           cp -R source/. .
 
       - name: Generate Xcode project
