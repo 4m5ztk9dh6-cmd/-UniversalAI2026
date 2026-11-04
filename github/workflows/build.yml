@@ -1,0 +1,93 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract source ZIP
+        run: |
+          ZIP_FILE=$(find . -maxdepth 3 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No source ZIP found"
+            exit 1
+          fi
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+      - name: Locate Swift project
+        run: |
+          APP_FILE=$(find extracted -name "UniversalAIAssistantApp.swift" | head -n 1)
+          if [ -z "$APP_FILE" ]; then
+            echo "Cannot find UniversalAIAssistantApp.swift"
+            find extracted -maxdepth 4 -type f
+            exit 1
+          fi
+          echo "PROJECT_DIR=$(dirname "$APP_FILE")" >> $GITHUB_ENV
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          cd "$PROJECT_DIR"
+          cat > project.yml <<'EOF'
+          name: UniversalAIAssistant
+          options:
+            bundleIdPrefix: com.example
+          settings:
+            base:
+              IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+              SWIFT_VERSION: "5.0"
+              TARGETED_DEVICE_FAMILY: "1,2"
+              GENERATE_INFOPLIST_FILE: YES
+              INFOPLIST_KEY_CFBundleDisplayName: "全能AI助手"
+              INFOPLIST_KEY_NSMicrophoneUsageDescription: "用于语音输入"
+              INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "用于语音识别"
+          targets:
+            UniversalAIAssistant:
+              type: application
+              platform: iOS
+              deploymentTarget: "17.0"
+              sources:
+                - path: .
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: com.example.UniversalAIAssistant
+          EOF
+          xcodegen generate
+
+      - name: Build iOS app
+        run: |
+          cd "$PROJECT_DIR"
+          xcodebuild \
+            -project UniversalAIAssistant.xcodeproj \
+            -scheme UniversalAIAssistant \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath "$GITHUB_WORKSPACE/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package IPA
+        run: |
+          APP_PATH="$GITHUB_WORKSPACE/build/Build/Products/Release-iphoneos/UniversalAIAssistant.app"
+          mkdir -p "$GITHUB_WORKSPACE/Payload"
+          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/Payload/"
+          cd "$GITHUB_WORKSPACE"
+          zip -qr UniversalAIAssistant-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: UniversalAIAssistant-IPA
+          path: UniversalAIAssistant-unsigned.ipa
