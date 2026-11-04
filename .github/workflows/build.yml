@@ -1,52 +1,86 @@
+
 name: Build iOS IPA
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - '*.zip'
-      - '.github/workflows/build.yml'
+      - '**.swift'
+      - '**.plist'
+      - '**.storyboard'
+      - '**.yml'
+      - '**.yaml'
+      - '**.zip'
+      - 'project.yml'
 
 jobs:
   build:
     runs-on: macos-15
 
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Extract source ZIP
         run: |
-          mkdir -p source
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name '*.zip' | grep -v 'iOS源码' | head -n 1)
-          echo "找到压缩包：$ZIP_FILE"
-          test -n "$ZIP_FILE"
-          unzip -o "$ZIP_FILE" -d source
-          cp -R source/. .
+          ZIP_FILE=$(find . -maxdepth 1 -name '*.zip' | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No source ZIP found in repository root"
+            exit 1
+          fi
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
+
+      - name: Locate project configuration
+        run: |
+          PROJECT_YML=$(find extracted -name project.yml -print -quit)
+          if [ -z "$PROJECT_YML" ]; then
+            echo "ERROR: project.yml not found in ZIP"
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$PROJECT_YML")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Build app
         run: |
-          xcodebuild -project UniversalAIAssistant.xcodeproj \
+          cd "$PROJECT_DIR"
+          xcodegen generate
+
+      - name: Build iOS app
+        run: |
+          cd "$PROJECT_DIR"
+          xcodebuild \
+            -project *.xcodeproj \
             -scheme UniversalAIAssistant \
             -configuration Release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
       - name: Package IPA
         run: |
+          APP_PATH=$(find "$PROJECT_DIR/build/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: App build product not found"
+            exit 1
+          fi
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
-          zip -r UniversalAIAssistant-IPA.zip Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r UniversalAIAssistant.ipa Payload
 
-      - name: Upload IPA
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: UniversalAIAssistant-IPA
-          path: UniversalAIAssistant-IPA.zip
+          path: UniversalAIAssistant.ipa
+          if-no-files-found: error
